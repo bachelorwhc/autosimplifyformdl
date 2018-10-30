@@ -94,8 +94,8 @@ int main( int argc, char** argv )
             {"((::)?state::texture_coordinate)\\(.*\\)", "float3"},
             {"((::)?state::texture_tangent_u)\\(.*\\)", "float3"},
             {"((::)?state::texture_tangent_v)\\(.*\\)", "float3"},
-            {"((::)?base::texture_coordinate_info)\\(.*\\)", "texture_coordinate_info"},
-            {"((::)?base::anisotropy_conversion)\\(.*\\)", "anisotropy_return"},
+            {"((::)?base::texture_coordinate_info)\\(.*\\)", "::base::texture_coordinate_info"},
+            {"((::)?base::anisotropy_conversion)\\(.*\\)", "::base::anisotropy_return"},
             {"((::)?state::normal)\\(.*\\)", "float3"},
             {"((::)?df::diffuse_edf)\\(.*\\)", "edf"},
             {"((::)?math::luminance)\\(.*\\)", "float"},
@@ -103,6 +103,9 @@ int main( int argc, char** argv )
             {"((::)?df::light_profile_maximum)\\(.*\\)", "float"},
             {"((::)?texture_isvalid)\\(.*\\)", "bool"},
             {"((::)?meters_per_scene_unit)\\(.*\\)", "float"},
+            {"((::)?base::transform_coordinate)\\(.*\\)", "::base::texture_coordinate_info"},
+            {"((::)?base::file_texture)\\(.*\\)", "::base::texture_return"},
+            {"((::)?nvidia::core_definitions::blend_colors)\\(.*\\)", "::base::texture_return"},
             {"(int)\\(.*\\)", "int"},
             {"(color)\\(.*\\)", "color"},
             {"(float)\\(.*\\)", "float"},
@@ -145,6 +148,19 @@ int main( int argc, char** argv )
                 }
                 std::string replace = prefix + std::to_string( serial++ );
 
+                auto reduct_exp_to_value = 
+                    [ &target_context, need_export ]
+                (const std::string& type, const std::string& name, const std::string& exp) -> void 
+                {
+                    auto value_exp = type + " " + name + " = " + exp + ";";
+                    if ( need_export )
+                    {
+                        boost::replace_all( target_context, exp, name );
+                        target_context = value_exp + "  // _RL_REDUCT_BREADCRUMB_\n" + target_context;
+                    }
+                    std::cout << value_exp << std::endl;
+                };
+
                 bool found = false;
                 for ( const auto& pkv : function_return_type )
                 {
@@ -156,19 +172,14 @@ int main( int argc, char** argv )
                     {
                         found = true;
 
-                        auto value_exp = t + " " + replace + " = " + call + ";";
-                        if ( need_export ) {
-                            boost::replace_all( target_context, call, replace );
-                            target_context = value_exp + "  // _RL_REDUCT_BREADCRUMB_\n" + target_context;
-                        }
-                        std::cout << value_exp << std::endl;
+                        reduct_exp_to_value( t, replace, call );
                         std::cout << call << " -> " << replace << " : " << kv.second << std::endl;
                         break;
                     }
                 }
                 if ( !found )
                 {
-                    std::cout << call << " return type UNKNOWN!" << std::endl;
+                    std::cout << call << " return type UNKNOWN! called" << kv.second << " times." << std::endl;
                 }
                 std::cout << std::endl;
             }
@@ -182,7 +193,7 @@ int main( int argc, char** argv )
             std::ofstream export_file( export_filename );
             if ( export_file.is_open() )
             {
-                export_file << context << "\n\n" << target_context;
+                export_file << context << "\n" << target_context;
                 export_file.close();
             }
             else
