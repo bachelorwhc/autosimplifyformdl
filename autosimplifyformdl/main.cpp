@@ -24,24 +24,23 @@ namespace rules
     auto S_EXPRESSION   = -char_( "+-" ) >> OPERAND % char_( "*+/-" );
     auto P_EXPRESSION   = -char_( "+-" ) >> '(' >> S_EXPRESSION >> ')';
     auto EXPRESSION     = 
-        ( ( -char_( "+-" ) >> (S_EXPRESSION | P_EXPRESSION) ) % char_( "*+/-" ) ) | 
-        ( '?' >> ( S_EXPRESSION | P_EXPRESSION ) >> char_(':') >> ( S_EXPRESSION | P_EXPRESSION ) );
+        ( ( S_EXPRESSION | P_EXPRESSION ) >> '?' >> ( S_EXPRESSION | P_EXPRESSION ) >> char_( ':' ) >> ( S_EXPRESSION | P_EXPRESSION ) ) |
+        ( ( -char_( "+-" ) >> (S_EXPRESSION | P_EXPRESSION) ) % char_( "*+/-" ) );
     auto ARGUMENTS      = EXPRESSION % ',';
     auto FUNCTION_CALL  = VARIABLE >> '(' >> -ARGUMENTS >> ')';
+    auto COND_EXPRESSION = ( S_EXPRESSION | P_EXPRESSION ) >> '?' >> ( S_EXPRESSION | P_EXPRESSION ) >> char_( ':' ) >> ( S_EXPRESSION | P_EXPRESSION );
 
     auto simple_function = rule<struct simple_function_, std::string>{ "simple_function" }
     = skip( space )[ x3::raw[ FUNCTION_CALL ] ];
-#ifdef _DEBUG
-    auto expression = rule<struct simple_function_, std::string>{ "expression" }
-    = skip( space )[ x3::raw[ EXPRESSION ] ];
-#endif
+    auto cond_expression = rule<struct cond_expression_, std::string>{ "cond_expression" }
+    = skip( space )[ x3::raw[ COND_EXPRESSION ] ];
 }
 
 int main( int argc, char** argv )
 {
     if ( argc < 3 )
     {
-        std::cout << "autosimplifyformdl [filename] [prfix] [export]";
+        std::cout << "autosimplifyformdl [filename] [prfix] ([export] ([mode = \"func\" | \"cond\"]))";
         return 1;
     }
     
@@ -49,11 +48,17 @@ int main( int argc, char** argv )
     
     std::ifstream file( filename );
 
+    bool cond_mode = false;
+    if ( argc == 5 )
+    {
+        if ( 0 == strcmp( argv[ 4 ], "cond" ) )
+            cond_mode = true;
+    }
+
     if ( file.is_open() )
     {
         std::string context( std::istreambuf_iterator<char>( file ), {} );
         std::vector<std::string> calls;
-        std::vector<std::string> expressions;
         std::map<std::string, int> function_call_times;
 
         size_t start_pos = 0;
@@ -68,10 +73,14 @@ int main( int argc, char** argv )
             start_pos = breadcrumb_match.suffix().first - context.begin();
 
         std::string target_context( context.begin() + start_pos, context.end() );
-        parse( target_context.begin(), target_context.end(), *x3::seek[ rules::simple_function ], calls );
-#ifdef _DEBUG
-        parse( target_context.begin(), target_context.end(), *x3::seek[ rules::expression], expressions );
-#endif
+        if ( cond_mode )
+        {
+            parse( target_context.begin(), target_context.end(), *x3::seek[ rules::cond_expression ], calls );
+        }
+        else
+        {
+            parse( target_context.begin(), target_context.end(), *x3::seek[ rules::simple_function ], calls );
+        }
         context.erase( context.begin() + start_pos, context.end() );
         
         if ( calls.size() )
@@ -106,6 +115,9 @@ int main( int argc, char** argv )
             {"((::)?base::transform_coordinate)\\(.*\\)", "::base::texture_coordinate_info"},
             {"((::)?base::file_texture)\\(.*\\)", "::base::texture_return"},
             {"((::)?nvidia::core_definitions::blend_colors)\\(.*\\)", "::base::texture_return"},
+            {"((::)?df::directional_factor)\\(.*\\)", "bsdf"},
+            {"((::)?df::weighted_layer)\\(.*\\)", "bsdf"},
+            {"((::)?df::custom_curve_layer)\\(.*\\)", "bsdf"},
             {"(int)\\(.*\\)", "int"},
             {"(color)\\(.*\\)", "color"},
             {"(float)\\(.*\\)", "float"},
@@ -116,7 +128,7 @@ int main( int argc, char** argv )
             {"(float4x4)\\(.*\\)", "float4x4"},
             {"(texture_2d)\\(.*\\)", "texture_2d"},
             {".*(edf)\\(.*\\)", "edf"},
-            {".*(bsdf)\\(.*\\)", "bsdf"},
+            {".*(bsdf)\\(.*\\)", "bsdf"}
         };
 
         std::regex ignore_pattern(
@@ -137,10 +149,14 @@ int main( int argc, char** argv )
         std::string prefix( argv[ 2 ] );
         for ( const auto& kv : function_call_times )
         {
-            if ( kv.second > 1 )
+            const auto& call = kv.first;
+            if ( cond_mode == true )
             {
-                const auto& call = kv.first;
-                
+                std::string replace = prefix + std::to_string( serial++ );
+                std::cout << "[type] " << replace << " = " << call << ";" << std::endl;
+            }
+            else if ( kv.second > 1 )
+            {
                 std::smatch dummy;
                 if ( std::regex_match( call, dummy, ignore_pattern ) )
                 {
@@ -179,7 +195,7 @@ int main( int argc, char** argv )
                 }
                 if ( !found )
                 {
-                    std::cout << call << " return type UNKNOWN! called" << kv.second << " times." << std::endl;
+                    std::cout << call << " return type UNKNOWN! called " << kv.second << " times." << std::endl;
                 }
                 std::cout << std::endl;
             }
